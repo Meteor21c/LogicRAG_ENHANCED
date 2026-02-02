@@ -125,7 +125,8 @@ class BaseRAG:
                 embeddings = self.model.encode(
                     batch,
                     convert_to_tensor=True,
-                    show_progress_bar=False
+                    show_progress_bar=False,
+                    normalize_embeddings=True #20250202 ADD
                 )
                 embeddings = embeddings.cpu()
                 all_embeddings.append(embeddings)
