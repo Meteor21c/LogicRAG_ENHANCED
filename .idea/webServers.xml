@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="7d39a5fa-126b-4b7f-a65d-097e8c4da80b" name="logicRAG_ori">
+        <fileTransfer rootFolder="/data1/llm" accessType="SFTP" host="121.48.165.117" port="8306" sshConfigId="49728834-81d8-472a-8a8c-d7f9c2268515" sshConfig="muchong@121.48.165.117:8306 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
