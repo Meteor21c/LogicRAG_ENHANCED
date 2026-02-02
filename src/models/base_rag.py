@@ -237,24 +237,30 @@ class BaseRAG:
         top_n_indices = np.argsort(scores)[-top_k:][::-1]
         return top_n_indices.tolist()
 
-    def _rrf_fusion(self, dense_indices: List[int], sparse_indices: List[int], k: int = 60) -> List[int]:
+    def _rrf_fusion(self, dense_indices: List[int], sparse_indices: List[int],
+                    weights: Dict[str, float] = {'dense': 0.8, 'sparse': 0.2},  # <--- 新增权重参数
+                    k: int = 60) -> List[int]:
         """
-        倒数排名融合 (Reciprocal Rank Fusion)
-        score = 1 / (k + rank)
+        加权倒数排名融合 (Weighted Reciprocal Rank Fusion)
         """
         rrf_score = {}
 
-        # 处理 Dense 结果
+        # 处理 Dense 结果 (给予更高权重)
         for rank, idx in enumerate(dense_indices):
             if idx not in rrf_score:
                 rrf_score[idx] = 0
-            rrf_score[idx] += 1 / (k + rank + 1)
+            # weight * (1 / (k + rank))
+            rrf_score[idx] += weights['dense'] * (1 / (k + rank + 1))
 
         # 处理 Sparse 结果
         for rank, idx in enumerate(sparse_indices):
             if idx not in rrf_score:
                 rrf_score[idx] = 0
-            rrf_score[idx] += 1 / (k + rank + 1)
+            rrf_score[idx] += weights['sparse'] * (1 / (k + rank + 1))
+
+        # 按分数降序排序
+        sorted_indices = sorted(rrf_score.keys(), key=lambda x: rrf_score[x], reverse=True)
+        return sorted_indices
 
         # 按分数降序排序
         sorted_indices = sorted(rrf_score.keys(), key=lambda x: rrf_score[x], reverse=True)
@@ -291,28 +297,26 @@ class BaseRAG:
         """
         [Advanced] Hybrid Retrieval + Rerank Pipeline
         """
-        # 0. 检查缓存
         if query in self.retrieval_cache:
             return self.retrieval_cache[query]
 
-        # 1. 双路召回 (Parallel Recall)
-        # 获取 Top-50 (RETRIEVAL_TOP_K_CANDIDATES)
+        # 1. 双路召回
         dense_hits = self._search_dense(query, top_k=RETRIEVAL_TOP_K_CANDIDATES)
         sparse_hits = self._search_sparse(query, top_k=RETRIEVAL_TOP_K_CANDIDATES)
 
-        # 2. 融合 (Fusion)
-        # 将两路结果合并，此时可能有重复索引，RRF 会处理排序
-        fused_indices = self._rrf_fusion(dense_hits, sparse_hits)
+        # 2. 融合 (Fusion) - 引入权重调整
+        # 这里我们更信任 BGE-M3，因此给 dense 0.7, sparse 0.3
+        fused_indices = self._rrf_fusion(
+            dense_hits,
+            sparse_hits,
+            weights={'dense': 0.8, 'sparse': 0.2} # <--- 调整权重
+        )
 
-        # 截取前 N 个候选项传给 Reranker (比如 Top 50 或 60)
-        # 这里我们直接把所有召回的唯一结果都丢给 Reranker 也可以，但为了效率通常截断
         rerank_candidates = fused_indices[:RETRIEVAL_TOP_K_CANDIDATES]
 
-        # 3. 重排序 (Rerank)
-        # 从 Candidates 中选出最终的 Top-10 (RERANK_TOP_K)
+        # 3. 重排序
         final_results = self._rerank(query, rerank_candidates, top_k=RERANK_TOP_K)
 
-        # 4. 缓存并返回
         self.retrieval_cache[query] = final_results
         return final_results
 
