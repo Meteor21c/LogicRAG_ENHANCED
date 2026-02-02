@@ -34,7 +34,7 @@ DENSE_MODEL_NAME = "BAAI/bge-m3"
 RERANK_MODEL_NAME = "BAAI/bge-reranker-large"
 
 # 检索超参数
-RETRIEVAL_TOP_K_CANDIDATES = 50  # 双路召回各自获取的候选数量
+RETRIEVAL_TOP_K_CANDIDATES = 100  # 双路召回各自获取的候选数量
 RERANK_TOP_K = 10  # 最终重排序后返回给 LLM 的数量
 
 # Embedding Configuration

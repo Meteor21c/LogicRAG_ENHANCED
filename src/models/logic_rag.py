@@ -228,11 +228,10 @@ Please format your response as a JSON object with these keys:
         """Generate final answer based on the information summary."""
         try:
             prompt = f"""You must give ONLY the direct answer in the most concise way possible. DO NOT explain or provide any additional context.
-If the answer is a simple yes/no, just say "Yes." or "No."
-If the answer is a name, just give the name.
-If the answer is a date, just give the date.
-If the answer is a number, just give the number.
-If the answer requires a brief phrase, make it as concise as possible.
+Guidelines:
+1. Be concise but specific.
+2. If the answer involves a specific person, place, or date mentioned in the summary, YOU MUST INCLUDE THEIR NAMES. Do not just use general categories if you have detailed information.
+3. If the answer is a simple yes/no, just say "Yes." or "No."
 
 Question: {question}
 
