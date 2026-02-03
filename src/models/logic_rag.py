@@ -14,102 +14,155 @@ logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
+
 class LogicRAG(BaseRAG):
-    
+
     def __init__(self, corpus_path: str = None, cache_dir: str = "./cache", filter_repeats: bool = False):
         """Initialize the LogicRAG system."""
         super().__init__(corpus_path, cache_dir)
         self.max_rounds = 3  # Default max rounds for iterative retrieval
         self.MODEL_NAME = "LogicRAG"
         self.filter_repeats = filter_repeats  # Option to filter repeated chunks across rounds
-    
+
     def set_max_rounds(self, max_rounds: int):
         """Set the maximum number of retrieval rounds."""
         self.max_rounds = max_rounds
-    
-    def refine_summary_with_context(self, question: str, new_contexts: List[str], 
-                                  current_summary: str = "") -> str:
+
+    #     def refine_summary_with_context(self, question: str, new_contexts: List[str],
+    #                                   current_summary: str = "") -> str:
+    #         """
+    #         Generate a new summary or refine an existing one based on newly retrieved contexts.
+    #
+    #         Args:
+    #             question: The original question
+    #             new_contexts: Newly retrieved context chunks
+    #             current_summary: Current information summary (if any)
+    #
+    #         Returns:
+    #             A concise summary of all relevant information so far
+    #         """
+    #         try:
+    #             context_text = "\n".join(new_contexts)
+    #
+    #             if not current_summary:
+    #                 # Generate initial summary
+    #                 prompt = f"""Please create a concise summary of the following information as it relates to answering this question:
+    #
+    # Question: {question}
+    #
+    # Information:
+    # {context_text}
+    #
+    # Your summary should:
+    # 1. Include all relevant facts that might help answer the question
+    # 2. Exclude irrelevant information
+    # 3. Be clear and concise
+    # 4. Preserve specific details, dates, numbers, and names that may be relevant
+    #
+    # Summary:"""
+    #             else:
+    #                 # Refine existing summary with new information
+    #                 prompt = f"""Please refine the following information summary using newly retrieved information.
+    #
+    # Question: {question}
+    #
+    # Current summary:
+    # {current_summary}
+    #
+    # New information:
+    # {context_text}
+    #
+    # Your refined summary should:
+    # 1. Integrate new relevant facts with the existing summary
+    # 2. Remove redundancies
+    # 3. Remain concise while preserving all important information
+    # 4. Prioritize information that helps answer the question
+    # 5. Maintain specific details, dates, numbers, and names that may be relevant
+    #
+    # Refined summary:"""
+    #
+    #             summary = get_response_with_retry(prompt)
+    #             return summary
+    #
+    #         except Exception as e:
+    #             logger.error(f"{Fore.RED}Error generating/refining summary: {e}{Style.RESET_ALL}")
+    #             # If error occurs, concatenate current summary with new contexts as fallback
+    #             if current_summary:
+    #                 return f"{current_summary}\n\nNew information:\n{context_text}"
+    #             return context_text
+
+    def process_step(self, global_question: str, sub_query: str, contexts: List[str]) -> Dict[str, str]:
         """
-        Generate a new summary or refine an existing one based on newly retrieved contexts.
-        
+        处理单个推理步骤：对检索内容进行总结，并尝试回答子问题。
+
         Args:
-            question: The original question
-            new_contexts: Newly retrieved context chunks
-            current_summary: Current information summary (if any)
-            
+            global_question: 用户最原始的问题 (用于保持上下文目标)
+            sub_query: 当前步骤的子查询
+            contexts: 当前步骤检索到的 top-k 文档
+
         Returns:
-            A concise summary of all relevant information so far
+            Dict containing 'summary' and 'answer'
         """
+        context_text = "\n".join(contexts)
+
+        # 构建 Prompt，要求同时输出总结和直接答案
+        # 这里使用了 JSON 格式输出，便于程序解析存储
+        prompt = f"""
+        You are an intelligent reasoning agent. 
+        Global Goal: Answer the question "{global_question}"
+        Current Step: Investigate the sub-query "{sub_query}"
+
+        Retrieved Information:
+        {context_text}
+
+        Task:
+        1. Summarize the retrieved information relevant to both the Global Goal and Current Step. Be concise but preserve key entities and facts.
+        2. Attempt to give a direct answer to the "Current Step" sub-query based ONLY on the retrieved information.
+        3.Format your response as a JSON object with two keys:
+        - "summary": "The concise summary..."
+        - "answer": "The direct answer to the sub-query..."
+        4.Do not output any other content.
+        """
+
         try:
-            context_text = "\n".join(new_contexts)
-            
-            if not current_summary:
-                # Generate initial summary
-                prompt = f"""Please create a concise summary of the following information as it relates to answering this question:
+            response = get_response_with_retry(prompt)
+            result = fix_json_response(response)
 
-Question: {question}
+            # 简单的错误处理，防止解析失败
+            if not result or "summary" not in result:
+                return {
+                    "summary": context_text[:500] + "...",  # Fallback
+                    "answer": "Could not parse answer."
+                }
+            return result
 
-Information:
-{context_text}
-
-Your summary should:
-1. Include all relevant facts that might help answer the question
-2. Exclude irrelevant information
-3. Be clear and concise
-4. Preserve specific details, dates, numbers, and names that may be relevant
-
-Summary:"""
-            else:
-                # Refine existing summary with new information
-                prompt = f"""Please refine the following information summary using newly retrieved information.
-
-Question: {question}
-
-Current summary:
-{current_summary}
-
-New information:
-{context_text}
-
-Your refined summary should:
-1. Integrate new relevant facts with the existing summary
-2. Remove redundancies
-3. Remain concise while preserving all important information
-4. Prioritize information that helps answer the question
-5. Maintain specific details, dates, numbers, and names that may be relevant
-
-Refined summary:"""
-            
-            summary = get_response_with_retry(prompt)
-            return summary
-            
         except Exception as e:
-            logger.error(f"{Fore.RED}Error generating/refining summary: {e}{Style.RESET_ALL}")
-            # If error occurs, concatenate current summary with new contexts as fallback
-            if current_summary:
-                return f"{current_summary}\n\nNew information:\n{context_text}"
-            return context_text
-    
-    def warm_up_analysis(self, question: str, info_summary: str) -> Dict:
+            logger.error(f"{Fore.RED}Error in process_step: {e}{Style.RESET_ALL}")
+            return {
+                "summary": context_text,
+                "answer": "Error during processing."
+            }
+
+    def warm_up_analysis(self, question: str, history: List[Dict]) -> Dict:
         """
-        This is a warm-up analysis, which is used to analyze if the question can be answered with simple fact retrieval, without any dependency analysis.
-        
-        Args:
-            question: The original question
-            info_summary: Current information summary
-            
-        Returns:
-            Dictionary with analysis results
-        """
+                Warm-up analysis: Analyze if the initial retrieval (Step 0) is sufficient.
+
+                Args:
+                    question: The global question.
+                    history: The structured history (containing the initial attempt).
+                """
+        # 1. 格式化历史信息 (复用我们定义的工具函数)
+        history_text = self._format_history_for_llm(history)
         try:
-            prompt = f"""Question: {question}
+            prompt = f"""
+            
+            Global Question: {question}
 
-Available Information:
-{info_summary}
+            Current Knowledge (from Initial Retrieval):
+            {history_text}
 
-Based on the information provided, please analyze:
-1. Can the question be answered completely with this information? (Yes/No)
-【IMPORTANT: Do not rely on your internal knowledge too much.If you are not quite sure about the correct answer, say "No" honestly.】
+Based on the Current Information provided, analyze:
+1. Can the global question be answered completely with this information? (Yes/No)
 2. What specific information is missing, if any?
 3. What specific question should we ask to find the missing information?
 4. Summarize our current understanding based on available information.
@@ -123,15 +176,15 @@ Please format your response as a JSON object with these keys:
 - "current_understanding": string
 - "dependencies": list of strings (key information dependencies)
 - "missing_reason": string (brief explanation why info is missing, max 20 words)"""
-            
+
             response = get_response_with_retry(prompt)
-            
+
             # Clean up response to ensure it's valid JSON
             response = response.strip()
-            
+
             # Remove any markdown code block markers
             response = response.replace('```json', '').replace('```', '')
-            
+
             # Parse the cleaned response using fix_json_response
             result = fix_json_response(response)
             if result is None:
@@ -143,28 +196,29 @@ Please format your response as a JSON object with these keys:
                     "dependencies": ["Information relevant to the question"],
                     "missing_reason": "Parse error occurred"
                 }
-            
+
             # Validate required fields
             required_fields = ["can_answer", "missing_info", "subquery", "current_understanding"]
             if not all(field in result for field in required_fields):
                 logger.error(f"{Fore.RED}Missing required fields in response: {response}{Style.RESET_ALL}")
                 raise ValueError("Missing required fields")
-            
+
             # Add default values for new interpretability fields if missing
             if "dependencies" not in result:
                 result["dependencies"] = ["Information relevant to the question"]
             if "missing_reason" not in result:
-                result["missing_reason"] = "Additional context needed" if not result["can_answer"] else "No missing information"
-            
+                result["missing_reason"] = "Additional context needed" if not result[
+                    "can_answer"] else "No missing information"
+
             # Ensure boolean type for can_answer
             result["can_answer"] = bool(result["can_answer"])
-            
+
             # Ensure non-empty subquery
             if not result["subquery"]:
                 result["subquery"] = question
-            
+
             return result
-                
+
         except Exception as e:
             logger.error(f"{Fore.RED}Error in analyze_dependency_graph: {e}{Style.RESET_ALL}")
             return {
@@ -176,71 +230,134 @@ Please format your response as a JSON object with these keys:
                 "missing_reason": "Analysis error occurred"
             }
 
-    def dependency_aware_rag(self, question: str, info_summary: str, dependencies: List[str], idx: int) -> str:
-        """
-        similar to "self.analyze_dependency_graph" that analyzes whether the current information summary is sufficient to answer the question,
-        this function analyzes whether the current information summary is sufficient to answer the question with the decomposed dependencies as references.
+    #     def dependency_aware_rag(self, question: str, info_summary: str, dependencies: List[str], idx: int) -> str:
+    #         """
+    #         similar to "self.analyze_dependency_graph" that analyzes whether the current information summary is sufficient to answer the question,
+    #         this function analyzes whether the current information summary is sufficient to answer the question with the decomposed dependencies as references.
+    #
+    #         And the function will answer whether the question can be answered, and if not, it will update the current query with dependencies as references.
+    #
+    #         Args:
+    #             question: str
+    #             info_summary: str
+    #             dependencies: List[str]
+    #             idx: int
+    #         """
+    #
+    #         try:
+    #             prompt = f"""
+    #             We pre-parsed the question into a list of dependencies, and the dependencies are sorted in a topological order, below is the question, the information summary, and the decomposed dependencies:
+    #
+    #             Question: {question}
+    #
+    #             Available Information:
+    #             {info_summary}
+    #
+    #             Decomposed dependencies:
+    #             {dependencies}
+    #
+    #             Current dependency to be answered:
+    #             {dependencies[idx]}
+    #
+    #             Please analyze the question and the information summary, and the decomposed dependencies, and answer the following questions:
+    #             Please analyze:
+    #             1. Can the question be answered completely with this information? (Yes/No)
+    #             2. Summarize our current understanding based on available information.
+    #
+    #             Please format your response as a JSON object with these keys:
+    #             - "can_answer": boolean
+    #             - "current_understanding": string
+    #             """
+    #             response = get_response_with_retry(prompt)
+    #             result = fix_json_response(response)
+    #             return result
+    #         except Exception as e:
+    #             logger.error(f"{Fore.RED}Error in dependency_aware_rag: {e}{Style.RESET_ALL}")
+    #             return {
+    #                 "can_answer": True,
+    #                 "current_understanding": f"Error during analysis: {str(e)}",
+    #             }
 
-        And the function will answer whether the question can be answered, and if not, it will update the current query with dependencies as references.
-
-        Args:
-            question: str
-            info_summary: str
-            dependencies: List[str]
-            idx: int
+    def dependency_aware_rag(self, question: str, history: List[Dict], dependencies: List[str], idx: int) -> Dict:
         """
+        Analyze if the question can be answered given the structured history.
+        """
+        # 1. 格式化历史信息
+        history_text = self._format_history_for_llm(history)
 
         try:
             prompt = f"""
-            We pre-parsed the question into a list of dependencies, and the dependencies are sorted in a topological order, below is the question, the information summary, and the decomposed dependencies:
+             We are solving the question: "{question}" by breaking it down into dependencies.
 
-            Question: {question}
+             Current Reasoning Chain (Executed Steps):
+             {history_text}
 
-            Available Information:
-            {info_summary}
+             Pending Dependencies (To be solved):
+             {dependencies[idx:]}
 
-            Decomposed dependencies:
-            {dependencies}
+             Current dependency to be answered next: {dependencies[idx]}
 
-            Current dependency to be answered:
-            {dependencies[idx]}
+             Please analyze:
+             1. Based on the "Current Reasoning Chain", can the original question ("{question}") be answered completely NOW? (Yes/No)
+             2. Summarize our current understanding based on the chain.
 
-            Please analyze the question and the information summary, and the decomposed dependencies, and answer the following questions:
-            Please analyze:
-            1. Can the question be answered completely with this information? (Yes/No)
-            2. Summarize our current understanding based on available information.
+             Format response as JSON:
+             - "can_answer": boolean
+             - "current_understanding": string
 
-            Please format your response as a JSON object with these keys:
-            - "can_answer": boolean
-            - "current_understanding": string
-            """
+             Attention:Do not output any other content.
+             """
             response = get_response_with_retry(prompt)
             result = fix_json_response(response)
             return result
         except Exception as e:
             logger.error(f"{Fore.RED}Error in dependency_aware_rag: {e}{Style.RESET_ALL}")
             return {
-                "can_answer": True,
+                "can_answer": False,  # 安全起见，出错时不轻易停止
                 "current_understanding": f"Error during analysis: {str(e)}",
             }
 
-    def generate_answer(self, question: str, info_summary: str) -> str:
-        """Generate final answer based on the information summary."""
+    #
+    #     def generate_answer(self, question: str, info_summary: str) -> str:
+    #         """Generate final answer based on the information summary."""
+    #         try:
+    #             prompt = f"""You must give ONLY the direct answer in the most concise way possible. DO NOT explain or provide any additional context.
+    # Guidelines:
+    # 1. Be concise but specific.
+    # 2. If the answer involves a specific person, place, or date mentioned in the summary, YOU MUST INCLUDE THEIR NAMES. Do not just use general categories if you have detailed information.
+    # 3. If the answer is a simple yes/no, just say "Yes." or "No."
+    #
+    # Question: {question}
+    #
+    # Information Summary:
+    # {info_summary}
+    #
+    # Remember: Be concise - give ONLY the essential answer, nothing more.
+    # Ans: """
+    #
+    #             return get_response_with_retry(prompt)
+    #         except Exception as e:
+    #             logger.error(f"{Fore.RED}Error generating answer: {e}{Style.RESET_ALL}")
+    #             return ""
+
+    def generate_answer(self, question: str, history: List[Dict]) -> str:
+        """Generate final answer based on the reasoning chain."""
+        history_text = self._format_history_for_llm(history)
+
+        debug_message = history_text
+        print(debug_message)  ####################################  debug
+
         try:
-            prompt = f"""You must give ONLY the direct answer in the most concise way possible. DO NOT explain or provide any additional context.
-Guidelines:
-1. Be concise but specific.
-2. If the answer involves a specific person, place, or date mentioned in the summary, YOU MUST INCLUDE THEIR NAMES. Do not just use general categories if you have detailed information.
-3. If the answer is a simple yes/no, just say "Yes." or "No."
+            prompt = f"""
+            Question: {question}
 
-Question: {question}
+            Reasoning Process:
+            {history_text}
 
-Information Summary:
-{info_summary}
+            Based on the step-by-step reasoning process above, provide the final answer to the question.
+            Remember: Be concise - give ONLY the essential answer, nothing more.
+            Concise Answer: """
 
-Remember: Be concise - give ONLY the essential answer, nothing more.
-Ans: """
-            
             return get_response_with_retry(prompt)
         except Exception as e:
             logger.error(f"{Fore.RED}Error generating answer: {e}{Style.RESET_ALL}")
@@ -288,7 +405,6 @@ Ans: """
         - The mayor of this capital
         """
 
-
         # Step 1: generate the dependency pairs by prompting LLMs
         prompt = f"""
         Given the question:
@@ -321,16 +437,16 @@ Ans: """
             List[str]
         """
         graph = {dep: [] for dep in dependencies}
-        
+
         for dependent_idx, dependency_idx in dependencies_pairs:
             if dependent_idx < len(dependencies) and dependency_idx < len(dependencies):
                 dependent = dependencies[dependent_idx]
                 dependency = dependencies[dependency_idx]
                 graph[dependency].append(dependent)  # dependency -> dependent
-        
+
         visited = set()
         stack = []
-        
+
         def dfs(node):
             if node in visited:
                 return
@@ -342,7 +458,7 @@ Ans: """
         for node in graph:
             if node not in visited:
                 dfs(node)
-        
+
         return stack[::-1]
 
     def _retrieve_with_filter(self, query: str, retrieved_chunks_set: set) -> list:
@@ -371,55 +487,67 @@ Ans: """
 
     def answer_question(self, question: str) -> Tuple[str, List[str], int]:
 
-        info_summary = "" 
-        round_count = 0
-        current_query = question
+        # --- 初始化变量 ---
+        history = []  # [New] 用于存储结构化的推理链
+        dependency_analysis_history = []
+        last_contexts = []
         retrieval_history = []
-        last_contexts = []  
-        dependency_analysis_history = []  
+        round_count = 0
         retrieved_chunks_set = set() if self.filter_repeats else None  # Track retrieved chunks if filtering
-        
+
         print(f"\n\n{Fore.CYAN}{self.MODEL_NAME} answering: {question}{Style.RESET_ALL}\n\n")
-        
-        #===============================================
-        #== Stage 1: warm up retrieval ==
+
+        # ===============================================
+        # == Stage 1: Warm up retrieval (作为第0步或初始背景) ==
+        # ===============================================
         if self.filter_repeats:
             new_contexts = self._retrieve_with_filter(question, retrieved_chunks_set)
             for chunk in new_contexts:
                 retrieved_chunks_set.add(chunk)
         else:
             new_contexts = self.retrieve(question)
-        last_contexts = new_contexts  
-        info_summary = self.refine_summary_with_context(
-            question, 
-            new_contexts, 
-            info_summary
-        )
 
-        analysis = self.warm_up_analysis(question, info_summary)
+        last_contexts = new_contexts
+
+        # [New Logic] 处理 Warm-up 步骤
+        # 即使是 Warm-up，我们也可以把它看作是对原始问题的一次直接尝试
+        warmup_step_result = self.process_step(question, question, new_contexts)
+
+        # 将 Warm-up 结果加入历史
+        history.append({
+            "step_type": "initial_attempt",
+            "query": question,
+            "summary": warmup_step_result["summary"],
+            "answer": warmup_step_result["answer"]
+        })
+        # [Modified] 直接传入 history，不需要再手动生成 info_summary 字符串了
+        analysis = self.warm_up_analysis(question, history)
+
 
         if analysis["can_answer"]:
             # In this case, the question can be answered with simple fact retrieval, without any dependency analysis
-            print(f"Warm-up analysis indicate the question can be answered with simple fact retrieval, without any dependency analysis.")
-            answer = self.generate_answer(question, info_summary)
-            # Reset dependency analysis history for simple questions
+            print(
+                f"Warm-up analysis indicate the question can be answered with simple fact retrieval, without any dependency analysis.")
+            answer = self.generate_answer(question, history)  # 传入 history
             self.last_dependency_analysis = []
+            self.last_history = history
             return answer, last_contexts, round_count
         else:
-            logger.info(f"Warm-up analysis indicate the requirement of deeper reasoning-enhanced RAG. Now perform analysis with logical dependency graph.")
+            logger.info(
+                f"Warm-up analysis indicate the requirement of deeper reasoning-enhanced RAG. Now perform analysis with logical dependency graph.")
             logger.info(f"Dependencies: {', '.join(analysis.get('dependencies', []))}")
 
             # sort the dependencies, by first constructing the dependency graphs, then use topological sort to get the sorted dependencies
             sorted_dependencies = self._sort_dependencies(analysis["dependencies"], question)
             dependency_analysis_history.append({"sorted_dependencies": sorted_dependencies})
             logger.info(f"Sorted dependencies: {sorted_dependencies}\n\n")
-        #===============================================
-        #== Stage 2: agentic iterative retrieval ==
-        idx = 0 # used to track the current dependency index
+        # ===============================================
+        # == Stage 2: agentic iterative retrieval ==
+        idx = 0  # used to track the current dependency index
 
         while round_count < self.max_rounds and idx < len(sorted_dependencies):
             round_count += 1
-            
+
             current_query = sorted_dependencies[idx]
             if self.filter_repeats:
                 new_contexts = self._retrieve_with_filter(current_query, retrieved_chunks_set)
@@ -428,25 +556,29 @@ Ans: """
             else:
                 new_contexts = self.retrieve(current_query)
             last_contexts = new_contexts  # Save current contexts
-            
-            
+
+            # [New Logic] 处理当前步骤
+            step_result = self.process_step(question, current_query, new_contexts)
+
             # Generate or refine information summary with new contexts
-            info_summary = self.refine_summary_with_context(
-                question, 
-                new_contexts, 
-                info_summary
-            )
-            
-            logger.info(f"Agentic retrieval at round {round_count}")
-            logger.info(f"current query: {current_query}")
-            
-            analysis = self.dependency_aware_rag(question, info_summary, sorted_dependencies, idx)
+            # 保存到数组/栈
+            history.append({
+                "query": current_query,
+                "step_type": "reasoning_step",
+                "summary": step_result["summary"],
+                "answer": step_result["answer"]
+            })
+
+            logger.info(f"Agentic retrieval at round {round_count} - Sub-answer: {step_result['answer']}")
+
+            # [New Logic] 判别器使用 history
+            analysis = self.dependency_aware_rag(question, history, sorted_dependencies, idx)
 
             retrieval_history.append({
                 "round": round_count,
                 "query": current_query,
                 "contexts": new_contexts,
-            }) 
+            })
 
             dependency_analysis_history.append({
                 "round": round_count,
@@ -456,17 +588,34 @@ Ans: """
 
             if analysis["can_answer"]:
                 # Generate and return final answer
-                answer = self.generate_answer(question, info_summary)
-                # Store dependency analysis history for evaluation access
-                self.last_dependency_analysis = dependency_analysis_history
-                # We return the last retrieved contexts for evaluation purposes
+                answer = self.generate_answer(question, history)  # 传入 history
+                self.last_dependency_analysis = []  # 需要根据你的需求适配 log
+                self.last_history = history
                 return answer, last_contexts, round_count
             else:
                 idx += 1
-        
+
         # If max rounds reached, generate best possible answer
         logger.info(f"Reached maximum rounds ({self.max_rounds}). Generating final answer...")
-        answer = self.generate_answer(question, info_summary)
-        # Store dependency analysis history for evaluation access
-        self.last_dependency_analysis = dependency_analysis_history
+        answer = self.generate_answer(question, history)
+        self.last_history = history
         return answer, last_contexts, round_count
+
+    def _format_history_for_llm(self, history: List[Dict[str, Any]]) -> str:
+        """
+        将推理历史列表格式化为清晰的字符串，供LLM阅读。
+
+        Args:
+            history: 包含每一步推理信息的列表，格式如下：
+                     [{'query': '...', 'summary': '...', 'answer': '...'}, ...]
+        Returns:
+            String representation of the reasoning chain.
+        """
+        formatted_text = ""
+        for i, step in enumerate(history):
+            formatted_text += f"Step {i + 1}:\n"
+            formatted_text += f"  - Sub-Query: {step['query']}\n"
+            formatted_text += f"  - Context Summary: {step['summary']}\n"
+            formatted_text += f"  - Direct Answer: {step['answer']}\n\n"
+
+        return formatted_text.strip()
