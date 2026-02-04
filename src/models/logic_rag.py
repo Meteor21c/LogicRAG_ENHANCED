@@ -302,13 +302,22 @@ Please format your response as a JSON object with these keys:
              2. Summarize our current understanding based on the chain.
 
              Format response as JSON:
-             - "can_answer": boolean
+             - "can_answer": boolean (true or false)
              - "current_understanding": string
 
              Attention:Do not output any other content.
              """
             response = get_response_with_retry(prompt)
             result = fix_json_response(response)
+            # 【修复重点】增加空值检查
+            if result is None:
+                logger.warning(
+                    f"{Fore.YELLOW}dependency_aware_rag received invalid JSON. Using fallback.{Style.RESET_ALL}")
+                return {
+                    "can_answer": False,  # 解析失败时保守起见认为不能回答，继续检索
+                    "current_understanding": "Failed to parse dependency analysis response."
+                }
+
             return result
         except Exception as e:
             logger.error(f"{Fore.RED}Error in dependency_aware_rag: {e}{Style.RESET_ALL}")
