@@ -162,7 +162,7 @@ class LogicRAG(BaseRAG):
             {history_text}
 
 Based on the Current Information provided, analyze:
-1. Can the global question be answered completely with this information? (Yes/No)
+1. Can the global question be answered completely ONLY with knowledge given above? (Yes/No)
 2. What specific information is missing, if any?
 3. What specific question should we ask to find the missing information?
 4. Summarize our current understanding based on available information.
@@ -348,16 +348,42 @@ Please format your response as a JSON object with these keys:
         print(debug_message)  ####################################  debug
 
         try:
+            #     prompt = f"""
+            # 【Task】:Based on the step-by-step reasoning process below, provide the direct answer to the question in the most concise way possible.DO NOT explain or provide any additional context.
+            # 【Guidelines】:
+            #     If the answer is a simple yes/no, just say "Yes." or "No."
+            #     If the answer is a name, just give the name.
+            #     If the answer is a date, just give the date.
+            #     If the answer is a number, just give the number.
+            #     If the answer requires a brief phrase, make it as concise as possible.
+            #
+            #     【Question】: {question}
+            #
+            #     【Reasoning Process】:
+            #     {history_text}
+            #
+            #
+            #     【Remember】: Be concise - give ONLY the essential answer, nothing more.
+            #     【Concise Answer】: """
+
             prompt = f"""
+            You are a strict answer generator. You must generate the final answer based on the provided reasoning process.
+            
             Question: {question}
 
             Reasoning Process:
             {history_text}
 
-            Based on the step-by-step reasoning process above, provide the final answer to the question.
-            Remember: Be concise - give ONLY the essential answer, nothing more.
+            【Strict Constraints】:
+            1. Give ONLY the direct answer. DO NOT explain or provide any additional context.
+            2. If the answer is a name, date, or number, output JUST that entity.
+            3. If the answer is a simple yes/no, just say "Yes" or "No".
+            4. If the answer requires a brief phrase, make it as concise as possible.
+            5. If still fails to yield a result, infer a reasonable and brief answer.
+            
             Concise Answer: """
 
+            print(f'''  - Final Answer:{get_response_with_retry(prompt)}''')
             return get_response_with_retry(prompt)
         except Exception as e:
             logger.error(f"{Fore.RED}Error generating answer: {e}{Style.RESET_ALL}")
@@ -522,7 +548,6 @@ Please format your response as a JSON object with these keys:
         })
         # [Modified] 直接传入 history，不需要再手动生成 info_summary 字符串了
         analysis = self.warm_up_analysis(question, history)
-
 
         if analysis["can_answer"]:
             # In this case, the question can be answered with simple fact retrieval, without any dependency analysis

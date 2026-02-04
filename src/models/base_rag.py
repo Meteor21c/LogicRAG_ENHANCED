@@ -296,30 +296,61 @@ class BaseRAG:
 
     def retrieve(self, query: str) -> List[str]:
         """
-        [Advanced] Hybrid Retrieval + Rerank Pipeline
-        """
+                [Advanced] Hybrid Retrieval + Rerank Pipeline with Smart Caching
+                """
+        # 0. 智能缓存检查 (防止缓存陷阱)
         if query in self.retrieval_cache:
-            return self.retrieval_cache[query]
+            cached_results = self.retrieval_cache[query]
+            # 只有当缓存的数据量足够满足当前需求时，才使用缓存
+            if len(cached_results) >= self.top_k:
+                return cached_results[:self.top_k]
+            # 否则：缓存不够用（比如之前存了5个，现在要10个），需要重新计算
 
-        # 1. 双路召回
+        # 1. 双路召回 (Parallel Recall)
         dense_hits = self._search_dense(query, top_k=RETRIEVAL_TOP_K_CANDIDATES)
         sparse_hits = self._search_sparse(query, top_k=RETRIEVAL_TOP_K_CANDIDATES)
 
-        # 2. 融合 (Fusion) - 引入权重调整
-        # 这里我们更信任 BGE-M3，因此给 dense 0.7, sparse 0.3
-        fused_indices = self._rrf_fusion(
-            dense_hits,
-            sparse_hits,
-            weights={'dense': 0.8, 'sparse': 0.2} # <--- 调整权重
-        )
-
+        # 2. 融合 (Fusion)
+        fused_indices = self._rrf_fusion(dense_hits, sparse_hits,weights={'dense': 0.8, 'sparse': 0.2})
         rerank_candidates = fused_indices[:RETRIEVAL_TOP_K_CANDIDATES]
 
-        # 3. 重排序
-        final_results = self._rerank(query, rerank_candidates, top_k=RERANK_TOP_K)
+        # 3. 重排序 (Rerank)
+        # 策略：取 RERANK_TOP_K 和 self.top_k 的最大值，确保缓存里有足够的数据做"蓄水池"
+        # 这样即使后续步骤需要 expand search window，也不用频繁重新 rerank
+        actual_rerank_k = max(RERANK_TOP_K, self.top_k)
+        reranked_results = self._rerank(query, rerank_candidates, top_k=actual_rerank_k)
+        # 4. 缓存并返回
+        self.retrieval_cache[query] = reranked_results
 
-        self.retrieval_cache[query] = final_results
-        return final_results
+        # 严格遵守本次调用的 top_k 限制
+        return reranked_results[:self.top_k]
+
+    # def retrieve(self, query: str) -> List[str]:
+    #     """
+    #     [Advanced] Hybrid Retrieval + Rerank Pipeline
+    #     """
+    #     if query in self.retrieval_cache:
+    #         return self.retrieval_cache[query]
+    #
+    #     # 1. 双路召回
+    #     dense_hits = self._search_dense(query, top_k=RETRIEVAL_TOP_K_CANDIDATES)
+    #     sparse_hits = self._search_sparse(query, top_k=RETRIEVAL_TOP_K_CANDIDATES)
+    #
+    #     # 2. 融合 (Fusion) - 引入权重调整
+    #     # 这里我们更信任 BGE-M3，因此给 dense 0.7, sparse 0.3
+    #     fused_indices = self._rrf_fusion(
+    #         dense_hits,
+    #         sparse_hits,
+    #         weights={'dense': 0.8, 'sparse': 0.2}  # <--- 调整权重
+    #     )
+    #
+    #     rerank_candidates = fused_indices[:RETRIEVAL_TOP_K_CANDIDATES]
+    #
+    #     # 3. 重排序
+    #     final_results = self._rerank(query, rerank_candidates, top_k=RERANK_TOP_K)
+    #
+    #     self.retrieval_cache[query] = final_results
+    #     return final_results
 
     # def retrieve(self, query: str) -> List[str]:
     #     """Retrieve similar sentences using query embedding."""
