@@ -175,15 +175,16 @@ def save_results(results: Dict, output_file: str, results_dir: str = 'result'):
     logger.info(f"Results saved to {output_path}")
 
 
-def evaluate_with_llm(generated: str, gold: str) -> bool:
+def evaluate_with_llm(question: str,generated: str, gold: str) -> bool:
     """Use LLM to evaluate if the generated answer correctly answers the question."""
     if not isinstance(generated, str) or not isinstance(gold, str):
         return False
 
-    prompt = f"""You are an expert evaluator. Please evaluate if the generated answer is correct by comparing it with the gold answer.
+    prompt = f"""You are an expert evaluator. Please evaluate if the generated answer is correct for the given question, comparing it with the gold answer.
 
-Generated answer: {generated}
-Gold answer: {gold}
+Question: {question}
+Generated Answer: {generated}
+Gold Answer: {gold}
 
 The generated answer should be considered correct if it:
 1. Contains the key information from the gold answer
